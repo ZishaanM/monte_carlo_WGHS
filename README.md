@@ -1,0 +1,196 @@
+# Monte Carlo Portfolio Simulation Framework
+
+A comprehensive Python framework for simulating portfolio returns over multiple years using Monte Carlo methods. This framework supports multiple asset classes, correlated returns, annual rebalancing, withdrawals, and tax considerations.
+
+## Features
+
+- **Multiple Asset Classes**: Support for equities, bonds, commodities, cash, and more
+- **Correlated Returns**: Uses multivariate normal distribution for realistic return correlations
+- **Annual Rebalancing**: Automatic portfolio rebalancing to target allocations
+- **Withdrawal Management**: Annual withdrawal calculations with depletion detection
+- **Tax Considerations**: Dividend and capital gains tax calculations
+- **Risk Analysis**: Comprehensive risk metrics including probability of failure
+- **Visualizations**: Simulation path plots and distribution analysis
+- **Modular Design**: Clean, object-oriented code structure for easy customization
+
+## Installation
+
+1. Clone or download the repository
+2. Install required dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+## Quick Start
+
+### Python Script
+```python
+from monte_carlo_portfolio import PortfolioSimulator, create_sample_data
+
+# Create sample data
+(asset_names, expected_returns, volatilities, correlation_matrix,
+ initial_value, allocation_weights, annual_withdrawal) = create_sample_data()
+
+# Initialize simulator
+simulator = PortfolioSimulator(
+    asset_names=asset_names,
+    expected_returns=expected_returns,
+    volatilities=volatilities,
+    correlation_matrix=correlation_matrix,
+    initial_value=initial_value,
+    allocation_weights=allocation_weights,
+    annual_withdrawal=annual_withdrawal,
+    years=10,
+    iterations=10000
+)
+
+# Run simulation
+results = simulator.run_monte_carlo()
+summary = simulator.summarize_results()
+simulator.print_summary_report()
+
+# Generate visualizations
+simulator.plot_simulation_paths()
+simulator.plot_final_value_distribution()
+```
+
+### Jupyter Notebook
+Open `monte_carlo_portfolio.ipynb` in Jupyter Lab or Jupyter Notebook for an interactive experience with detailed explanations and examples.
+
+## Sample Results
+
+The framework includes realistic sample data with the following assumptions:
+
+- **Assets**: US Equities (50%), International Equities (30%), Gold (10%), Cash (10%)
+- **Expected Returns**: 8%, 6%, 3%, 2% respectively
+- **Volatilities**: 15%, 18%, 12%, 1% respectively
+- **Initial Portfolio**: $500,000
+- **Annual Withdrawal**: $10,000
+- **Time Horizon**: 10 years
+- **Simulations**: 10,000 iterations
+
+### Typical Results:
+- **Mean Final Value**: ~$760,000
+- **Median Final Value**: ~$712,000
+- **Success Rate**: ~80%
+- **Probability of Failure**: ~0%
+
+## Customization
+
+### Modifying Asset Allocation
+```python
+# Custom asset allocation
+asset_names = ['Stocks', 'Bonds', 'REITs', 'Commodities']
+expected_returns = [0.09, 0.04, 0.06, 0.05]
+volatilities = [0.16, 0.06, 0.12, 0.20]
+allocation_weights = [0.60, 0.25, 0.10, 0.05]
+```
+
+### Adjusting Tax Rates
+```python
+simulator = PortfolioSimulator(
+    # ... other parameters ...
+    dividend_tax_rate=0.20,      # 20% dividend tax
+    capital_gains_tax_rate=0.25 # 25% capital gains tax
+)
+```
+
+### Different Time Horizons
+```python
+simulator = PortfolioSimulator(
+    # ... other parameters ...
+    years=20,           # 20-year simulation
+    iterations=50000    # More iterations for precision
+)
+```
+
+## Key Methods
+
+### `PortfolioSimulator` Class
+
+- **`simulate_portfolio()`**: Run a single simulation path
+- **`run_monte_carlo()`**: Execute all Monte Carlo iterations
+- **`summarize_results()`**: Calculate comprehensive statistics
+- **`plot_simulation_paths()`**: Visualize sample simulation paths
+- **`plot_final_value_distribution()`**: Plot distribution of final values
+- **`print_summary_report()`**: Print detailed results report
+
+## Output Metrics
+
+The framework provides comprehensive risk and return metrics:
+
+- **Return Metrics**: Mean, median, percentiles of final portfolio values
+- **Risk Metrics**: Probability of failure, probability of depletion
+- **Performance Metrics**: Success rate, average annual return, Sharpe ratio
+- **Distribution Analysis**: Full range of possible outcomes
+
+## Advanced Features
+
+### Correlation Matrix
+The framework uses a correlation matrix to model realistic relationships between asset classes:
+
+```python
+correlation_matrix = np.array([
+    [1.00, 0.70, 0.20, 0.10],  # US Equities
+    [0.70, 1.00, 0.15, 0.05],  # International Equities
+    [0.20, 0.15, 1.00, 0.00],  # Gold
+    [0.10, 0.05, 0.00, 1.00]   # Cash
+])
+```
+
+### Tax Logic
+The framework includes placeholder tax calculations that can be customized:
+
+- Dividend tax on assumed 2% dividend yield
+- Capital gains tax (placeholder for future implementation)
+- Easy to extend for more sophisticated tax strategies
+
+## Future Enhancements
+
+### Planned Features:
+1. **Advanced Tax Logic**: More sophisticated tax calculations
+2. **Dynamic Rebalancing**: Threshold-based and time-based rebalancing
+3. **Additional Asset Classes**: Real estate, cryptocurrencies, alternatives
+4. **Risk Management**: Drawdown limits, volatility targeting
+5. **Scenario Analysis**: Stress testing and sensitivity analysis
+
+### Customization Areas:
+- Tax optimization strategies
+- Dynamic withdrawal strategies
+- Market regime detection
+- Alternative risk models
+- Performance attribution analysis
+
+## File Structure
+
+```
+├── monte_carlo_portfolio.py      # Main Python script
+├── monte_carlo_portfolio.ipynb   # Jupyter notebook version
+├── requirements.txt              # Python dependencies
+└── README.md                    # This file
+```
+
+## Dependencies
+
+- **numpy**: Numerical computations and random number generation
+- **pandas**: Data manipulation and analysis
+- **matplotlib**: Plotting and visualization
+- **typing**: Type hints for better code documentation
+
+## License
+
+This project is provided as-is for educational and research purposes. Feel free to modify and extend for your specific needs.
+
+## Contributing
+
+Contributions are welcome! Areas for improvement include:
+- Additional asset classes and models
+- Enhanced tax calculations
+- More sophisticated rebalancing strategies
+- Performance optimizations
+- Additional visualization options
+
+## Contact
+
+For questions or suggestions, please open an issue or create a pull request.
