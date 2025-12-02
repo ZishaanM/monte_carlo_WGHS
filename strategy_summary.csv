@@ -1,4 +1,0 @@
-Strategy,Emerging_Markets_Weight,Japan_Weight,Intl_Developed_Weight,Bonds_Weight,Gold_Weight,US_Equities_Weight,3x_Success_Pct,Mean_Terminal,Median_Terminal,Bottom5Pct
-Highest 3x Success,0.9,0.05,0.05,0.0,0.0,0.0,37.4,1391633.8531581096,1208790.0336497405,384636.9139019415
-Balanced Approach,0.9,0.05,0.05,0.0,0.0,0.0,37.4,1391633.8531581096,1208790.0336497405,384636.9139019415
-Conservative,0.65,0.05,0.1,0.1,0.0,0.1,31.4,1263165.0756817546,1145912.1337376293,463737.4184613404
