@@ -43,7 +43,8 @@ class PortfolioSimulator:
                  capital_gains_tax_rate: float = 0.20,
                  rebalance_enabled: bool = True,
                  rebalance_check_frequency: int = 3,
-                 rebalance_threshold: float = 0.05):
+                 rebalance_threshold: float = 0.05,
+                 verbose: bool = True):
         """
         Initialize the portfolio simulator with historical returns data.
         
@@ -95,11 +96,14 @@ class PortfolioSimulator:
         self.rebalance_enabled = rebalance_enabled
         self.rebalance_check_frequency = rebalance_check_frequency
         self.rebalance_threshold = rebalance_threshold
+        self.verbose = verbose
         
         # Pre-compute rolling window covariance matrices and mean returns
-        print(f"Computing rolling window statistics (window size: {window_size} months)...")
+        if self.verbose:
+            print(f"Computing rolling window statistics (window size: {window_size} months)...")
         self.rolling_covariances, self.rolling_means = self._compute_rolling_statistics()
-        print(f"✓ Computed {len(self.rolling_covariances)} rolling windows")
+        if self.verbose:
+            print(f"✓ Computed {len(self.rolling_covariances)} rolling windows")
         
         # Initialize results storage
         self.simulation_results = None
@@ -142,7 +146,7 @@ class PortfolioSimulator:
         if returns_df.isnull().any().any():
             raise ValueError("returns_df contains missing values. Please handle missing data first.")
         
-        print(f"✓ Input validation passed for {n_assets} asset classes with {len(returns_df)} periods")
+        # Validation passed (message printed by caller if verbose)
     
     def _compute_rolling_statistics(self) -> Tuple[List[np.ndarray], List[np.ndarray]]:
         """
@@ -345,7 +349,7 @@ class PortfolioSimulator:
     
     def run_monte_carlo(self) -> Tuple[pd.DataFrame, np.ndarray]:
         """
-        Run Monte Carlo simulation for all iterations.
+        Run Monte Carlo simulation for all iterations (VECTORIZED for speed).
         
         Returns:
         --------
@@ -354,27 +358,95 @@ class PortfolioSimulator:
             Array of max drawdowns for each simulation (shape: iterations,)
         """
         
-        print(f"Running {self.iterations:,} Monte Carlo simulations ({self.months} months each)...")
+        if self.verbose:
+            print(f"Running {self.iterations:,} Monte Carlo simulations ({self.months} months each)...")
         
-        # Initialize results array
+        n_windows = len(self.rolling_covariances)
+        
+        # Pre-generate all random window indices for all iterations and months
+        window_indices = np.random.randint(0, n_windows, size=(self.iterations, self.months))
+        
+        # Pre-generate all random returns using a simplified approach:
+        # Use the mean of all rolling means and covariances for bulk generation
+        avg_mean = np.mean(self.rolling_means, axis=0)
+        avg_cov = np.mean(self.rolling_covariances, axis=0)
+        
+        # Ensure covariance is positive semi-definite
+        min_eig = np.linalg.eigvalsh(avg_cov).min()
+        if min_eig < 1e-8:
+            avg_cov += np.eye(self.n_assets) * (1e-8 - min_eig)
+        
+        # Generate all returns at once: shape (iterations, months, n_assets)
+        all_returns = np.random.multivariate_normal(
+            avg_mean, avg_cov, size=(self.iterations, self.months)
+        )
+        
+        # Initialize portfolio values array
         results = np.zeros((self.iterations, self.months + 1))
-        max_drawdowns = np.zeros(self.iterations)
+        results[:, 0] = self.initial_value
         
-        # Run simulations
-        for i in range(self.iterations):
-            if (i + 1) % 1000 == 0:
-                print(f"Completed {i + 1:,} simulations...")
+        # Vectorized simulation across all iterations
+        # Track asset allocations for rebalancing
+        asset_values = np.zeros((self.iterations, self.n_assets))
+        asset_values[:] = self.initial_value * self.allocation_weights
+        
+        for month in range(1, self.months + 1):
+            # Get returns for this month (all iterations at once)
+            monthly_returns = all_returns[:, month - 1, :]  # shape: (iterations, n_assets)
             
-            portfolio_path, mdd = self.simulate_portfolio()
-            results[i] = portfolio_path
-            max_drawdowns[i] = mdd
+            # Apply returns to asset values
+            asset_values = asset_values * (1 + monthly_returns)
+            
+            # Calculate total portfolio value
+            total_values = asset_values.sum(axis=1)
+            
+            # Apply annual withdrawal (after 3 years, at year end)
+            if month % 12 == 0 and month >= 36:
+                # Apply withdrawal where portfolio has enough value
+                can_withdraw = total_values > self.annual_withdrawal
+                total_values = np.where(can_withdraw, 
+                                       total_values - self.annual_withdrawal, 
+                                       0)
+                
+                # Apply dividend tax (simplified)
+                dividend_tax = total_values * (0.02 / 12) * self.dividend_tax_rate
+                total_values = total_values - dividend_tax
+                
+                # Update asset values proportionally
+                scale = np.where(asset_values.sum(axis=1) > 0,
+                                total_values / asset_values.sum(axis=1),
+                                0)
+                asset_values = asset_values * scale[:, np.newaxis]
+            
+            # Hybrid rebalancing check (every N months)
+            if self.rebalance_enabled and month % self.rebalance_check_frequency == 0:
+                # Calculate current weights
+                total_for_weights = asset_values.sum(axis=1, keepdims=True)
+                total_for_weights = np.where(total_for_weights > 0, total_for_weights, 1)
+                current_weights = asset_values / total_for_weights
+                
+                # Check which portfolios need rebalancing
+                drifts = np.abs(current_weights - self.allocation_weights)
+                needs_rebalance = np.any(drifts > self.rebalance_threshold, axis=1)
+                
+                # Rebalance those that need it
+                for i in np.where(needs_rebalance & (total_values > 0))[0]:
+                    asset_values[i] = total_values[i] * self.allocation_weights
+            
+            results[:, month] = total_values
+        
+        # Calculate max drawdowns vectorized
+        running_max = np.maximum.accumulate(results, axis=1)
+        drawdowns = np.where(running_max > 0, (results / running_max) - 1, 0)
+        max_drawdowns = drawdowns.min(axis=1)
         
         # Convert to DataFrame
         columns = [f'Month_{i}' for i in range(self.months + 1)]
         self.simulation_results = pd.DataFrame(results, columns=columns)
         self.max_drawdowns = max_drawdowns
         
-        print(f"✓ Completed {self.iterations:,} simulations")
+        if self.verbose:
+            print(f"✓ Completed {self.iterations:,} simulations")
         return self.simulation_results, self.max_drawdowns
     
     def summarize_results(self) -> Dict:

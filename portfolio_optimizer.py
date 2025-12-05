@@ -12,6 +12,9 @@ import pandas as pd
 from monte_carlo_portfolio import PortfolioSimulator
 from tqdm import tqdm
 import itertools
+import time
+import multiprocessing as mp
+from functools import partial
 
 
 # ============================================================================
@@ -24,17 +27,20 @@ import itertools
 
 # Set to True to use real historical data from CSV file
 # Set to False to use synthetic data based on model assumptions below
-USE_REAL_DATA = True
+USE_REAL_DATA = False
 HISTORICAL_DATA_FILE = 'historical_asset_returns.csv'
 
 # Asset class names (order matters - must match CSV columns)
 ASSET_NAMES = ['Emerging_Markets', 'Japan', 'Intl_Developed', 'Bonds', 'Gold', 'US_Equities']
 
-# Expected annual returns (as decimals) - used only if USE_REAL_DATA = False
-EXPECTED_RETURNS = [0.1181, 0.0956, 0.0982, 0.0393, 0.0816, 0.1060]
+# Expected monthly returns (as decimals) - used only if USE_REAL_DATA = False
+# Order: Emerging Markets, Japan, Intl Developed, Bonds, Gold, US Equities
+# Converted from annual using: monthly = (1 + annual)^(1/12) - 1
+EXPECTED_RETURNS = [0.00934, 0.00764, 0.00784, 0.00322, 0.00656, 0.00844]
 
-# Annual volatilities (standard deviations, as decimals) - used only if USE_REAL_DATA = False
-VOLATILITIES = [0.21, 0.18, 0.15, 0.089, 0.173, 0.157]
+# Monthly volatilities (standard deviations, as decimals) - used only if USE_REAL_DATA = False
+# Order: Emerging Markets, Japan, Intl Developed, Bonds, Gold, US Equities
+VOLATILITIES = [0.0606, 0.0525, 0.0404, 0.0257, 0.0393, 0.0370]
 
 # Correlation matrix between asset classes - used only if USE_REAL_DATA = False
 # Rows/columns order: Emerging Markets, Japan, Intl Developed, Bonds, Gold, US Equities
@@ -57,12 +63,13 @@ INITIAL_VALUE = 500_000          # Initial portfolio value ($)
 ANNUAL_WITHDRAWAL = 12_000       # Annual withdrawal amount ($)
 
 # Time horizon
-YEARS = 5                        # Number of years to simulate
+YEARS = 10                       # Number of years to simulate
 HISTORICAL_PERIODS = 120         # Number of months of historical data to generate
 
 # Monte Carlo settings
-ITERATIONS = 30                  # Number of Monte Carlo simulations per allocation
+ITERATIONS = 2000                   # Number of Monte Carlo simulations per allocation (reduced for speed)
 WINDOW_SIZE = 24                 # Rolling window size in months for covariance calculation
+NUM_PROCESSES = max(1, mp.cpu_count() - 1)  # Use all CPU cores except one
 
 # Tax rates
 DIVIDEND_TAX_RATE = 0.20         # Tax rate on dividend income
@@ -164,9 +171,9 @@ def create_returns_df_from_parameters(asset_names, expected_returns, volatilitie
     asset_names : List[str]
         Names of asset classes
     expected_returns : List[float]
-        Expected annual returns (as decimals)
+        Expected monthly returns (as decimals)
     volatilities : List[float]
-        Annual volatilities (as decimals)
+        Monthly volatilities (as decimals)
     correlation_matrix : np.ndarray
         Correlation matrix between assets
     n_periods : int
@@ -178,9 +185,9 @@ def create_returns_df_from_parameters(asset_names, expected_returns, volatilitie
         DataFrame with monthly returns, columns = asset classes, index = date
     """
     
-    # Convert annual parameters to monthly
-    monthly_means = np.array(expected_returns) / 12
-    monthly_vols = np.array(volatilities) / np.sqrt(12)
+    # Use monthly parameters directly (no conversion needed)
+    monthly_means = np.array(expected_returns)
+    monthly_vols = np.array(volatilities)
     
     # Create covariance matrix from correlation matrix and volatilities
     std_matrix = np.outer(monthly_vols, monthly_vols)
@@ -204,13 +211,49 @@ def create_returns_df_from_parameters(asset_names, expected_returns, volatilitie
     return returns_df
 
 
+# Global variable to store returns_df for multiprocessing workers
+_global_returns_df = None
+
+def _init_worker(returns_df_values, returns_df_index, returns_df_columns):
+    """Initialize worker process with shared data."""
+    global _global_returns_df
+    _global_returns_df = pd.DataFrame(
+        returns_df_values, 
+        index=pd.to_datetime(returns_df_index), 
+        columns=returns_df_columns
+    )
+
+def _worker_simulate(args):
+    """Worker function for parallel simulation."""
+    weights, initial_value, annual_withdrawal, years, iterations, window_size, \
+        rebalance_enabled, rebalance_check_frequency, rebalance_threshold = args
+    
+    try:
+        return run_simulation_for_allocation(
+            weights=weights,
+            returns_df=_global_returns_df,
+            initial_value=initial_value,
+            annual_withdrawal=annual_withdrawal,
+            years=years,
+            iterations=iterations,
+            window_size=window_size,
+            rebalance_enabled=rebalance_enabled,
+            rebalance_check_frequency=rebalance_check_frequency,
+            rebalance_threshold=rebalance_threshold
+        )
+    except Exception as e:
+        print(f"\nError with allocation {weights}: {e}")
+        return None
+
+
 def run_simulation_for_allocation(weights,
                                   returns_df,
                                   initial_value, annual_withdrawal,
                                   years, iterations, window_size=36,
                                   rebalance_enabled=True,
                                   rebalance_check_frequency=3,
-                                  rebalance_threshold=0.05):
+                                  rebalance_threshold=0.05,
+                                  verbose=False):
     """
     Run a single Monte Carlo simulation for given allocation weights using rolling window covariances.
     
@@ -256,7 +299,8 @@ def run_simulation_for_allocation(weights,
         capital_gains_tax_rate=CAPITAL_GAINS_TAX_RATE,
         rebalance_enabled=rebalance_enabled,
         rebalance_check_frequency=rebalance_check_frequency,
-        rebalance_threshold=rebalance_threshold
+        rebalance_threshold=rebalance_threshold,
+        verbose=verbose
     )
     
     # Run simulation (now returns tuple of results_df and max_drawdowns)
@@ -389,29 +433,42 @@ def main():
                         combinations.append(tuple(w / step_units for w in weights))
     print(f"Total combinations to test: {len(combinations)}")
     
-    # Store results
-    results = []
+    # Prepare arguments for parallel processing
+    args_list = [
+        (combo, INITIAL_VALUE, ANNUAL_WITHDRAWAL, YEARS, ITERATIONS, WINDOW_SIZE,
+         REBALANCE_ENABLED, REBALANCE_CHECK_FREQUENCY, REBALANCE_THRESHOLD)
+        for combo in combinations
+    ]
     
-    # Run simulations for each combination
-    print("\nRunning simulations with rolling window covariance matrices...")
-    for combo in tqdm(combinations, desc="Progress"):
-        try:
-            result = run_simulation_for_allocation(
-                weights=combo,
-                returns_df=returns_df,
-                initial_value=INITIAL_VALUE,
-                annual_withdrawal=ANNUAL_WITHDRAWAL,
-                years=YEARS,
-                iterations=ITERATIONS,
-                window_size=WINDOW_SIZE,
-                rebalance_enabled=REBALANCE_ENABLED,
-                rebalance_check_frequency=REBALANCE_CHECK_FREQUENCY,
-                rebalance_threshold=REBALANCE_THRESHOLD
-            )
-            results.append(result)
-        except Exception as e:
-            print(f"\nError with allocation {combo}: {e}")
-            continue
+    # Run simulations in parallel
+    print(f"\nRunning simulations with {NUM_PROCESSES} parallel processes...")
+    print(f"(Using {ITERATIONS:,} iterations per allocation)")
+    start_time = time.time()
+    
+    # Prepare data for workers (convert DataFrame to serializable format)
+    returns_values = returns_df.values
+    returns_index = returns_df.index.astype(str).tolist()
+    returns_columns = returns_df.columns.tolist()
+    
+    with mp.Pool(
+        processes=NUM_PROCESSES,
+        initializer=_init_worker,
+        initargs=(returns_values, returns_index, returns_columns)
+    ) as pool:
+        # Use imap for progress tracking
+        results = []
+        for result in tqdm(
+            pool.imap(_worker_simulate, args_list),
+            total=len(args_list),
+            desc="Progress",
+            unit="alloc",
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+        ):
+            if result is not None:
+                results.append(result)
+    
+    elapsed_time = time.time() - start_time
+    print(f"\n✓ Simulation completed in {elapsed_time/60:.1f} minutes ({elapsed_time:.1f} seconds)")
     
     # Convert to DataFrame
     results_df = pd.DataFrame(results)
@@ -469,9 +526,4 @@ def main():
 if __name__ == "__main__":
     results_df = main()
     print("\n" + "="*70)
-    print("OPTIMIZATION COMPLETE")
-    print("="*70)
-    print("\nNext steps:")
-    print("1. Analyze the CSV file for optimal strategies")
-    print("2. Use analyze_results.py to identify best allocation for 3x returns")
-
+    print("Done!")
