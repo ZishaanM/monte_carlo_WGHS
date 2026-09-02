@@ -518,46 +518,96 @@ class PortfolioSimulator:
         return np.mean(annual_returns) if annual_returns else 0
     
     def _calculate_sharpe_ratio(self, risk_free_rate: float = 0.02) -> float:
-        """Calculate Sharpe ratio using risk-free rate."""
+        """
+        Calculate Sharpe ratio using risk-free rate.
         
-        avg_return = self._calculate_average_annual_return()
-        if avg_return == 0:
+        Sharpe Ratio = (Annualized Return - Risk-Free Rate) / Annualized Volatility
+        
+        Uses monthly returns and annualizes:
+        - Annualized Return = Mean Monthly Return × 12
+        - Annualized Volatility = Monthly Std Dev × √12
+        """
+        
+        if self.simulation_results is None:
             return 0
         
-        # Use standard deviation of final values as proxy for risk
-        final_values = self.simulation_results.iloc[:, -1]
-        risk = final_values.std() / final_values.mean()
+        # Calculate monthly returns for all simulations
+        # Shape: (iterations, months)
+        values = self.simulation_results.values
         
-        return (avg_return - risk_free_rate) / risk if risk > 0 else 0
+        # Monthly returns: (V_t - V_{t-1}) / V_{t-1}
+        # Avoid division by zero
+        prev_values = values[:, :-1]
+        curr_values = values[:, 1:]
+        
+        # Mask out zero/negative values to avoid invalid returns
+        valid_mask = prev_values > 0
+        monthly_returns = np.where(valid_mask, (curr_values - prev_values) / prev_values, np.nan)
+        
+        # Calculate mean monthly return and monthly volatility across all observations
+        # Flatten to get all monthly returns across all simulations
+        all_monthly_returns = monthly_returns[~np.isnan(monthly_returns)]
+        
+        if len(all_monthly_returns) == 0:
+            return 0
+        
+        mean_monthly_return = np.mean(all_monthly_returns)
+        monthly_volatility = np.std(all_monthly_returns)
+        
+        # Annualize (compound for returns, √12 for volatility)
+        annualized_return = (1 + mean_monthly_return) ** 12 - 1
+        annualized_volatility = monthly_volatility * np.sqrt(12)
+        
+        return (annualized_return - risk_free_rate) / annualized_volatility if annualized_volatility > 0 else 0
     
     def _calculate_sortino_ratio(self, risk_free_rate: float = 0.02) -> float:
         """
         Calculate Sortino ratio using risk-free rate.
-        Sortino ratio only considers downside deviation (negative returns).
+        Sortino ratio only considers downside deviation (returns below target).
+        
+        Uses monthly returns and annualizes:
+        - Annualized Return = Mean Monthly Return × 12
+        - Annualized Downside Deviation = Monthly Downside Dev × √12
         """
         
-        avg_return = self._calculate_average_annual_return()
-        if avg_return == 0:
+        if self.simulation_results is None:
             return 0
         
-        # Calculate annual returns for each simulation
-        annual_returns = []
-        for i in range(self.iterations):
-            values = self.simulation_results.iloc[i].values
-            if values[-1] > 0:  # Only include non-depleted portfolios
-                total_return = (values[-1] / values[0]) ** (12 / self.months) - 1
-                annual_returns.append(total_return)
+        # Calculate monthly returns for all simulations
+        values = self.simulation_results.values
         
-        if not annual_returns:
+        # Monthly returns: (V_t - V_{t-1}) / V_{t-1}
+        prev_values = values[:, :-1]
+        curr_values = values[:, 1:]
+        
+        # Mask out zero/negative values to avoid invalid returns
+        valid_mask = prev_values > 0
+        monthly_returns = np.where(valid_mask, (curr_values - prev_values) / prev_values, np.nan)
+        
+        # Flatten to get all monthly returns
+        all_monthly_returns = monthly_returns[~np.isnan(monthly_returns)]
+        
+        if len(all_monthly_returns) == 0:
             return 0
         
-        annual_returns = np.array(annual_returns)
+        mean_monthly_return = np.mean(all_monthly_returns)
         
-        # Calculate downside deviation (only consider returns below risk-free rate)
-        downside_returns = annual_returns[annual_returns < risk_free_rate] - risk_free_rate
-        downside_deviation = np.sqrt(np.mean(downside_returns**2)) if len(downside_returns) > 0 else 0
+        # Monthly risk-free rate (for downside threshold)
+        monthly_rf = risk_free_rate / 12
         
-        return (avg_return - risk_free_rate) / downside_deviation if downside_deviation > 0 else 0
+        # Calculate downside deviation (only returns below monthly risk-free rate)
+        downside_returns = all_monthly_returns[all_monthly_returns < monthly_rf] - monthly_rf
+        
+        if len(downside_returns) == 0:
+            return 0
+        
+        monthly_downside_dev = np.sqrt(np.mean(downside_returns**2))
+        
+        # Annualize (compound for returns, √12 for volatility)
+        annualized_return = (1 + mean_monthly_return) ** 12 - 1
+        annualized_downside_dev = monthly_downside_dev * np.sqrt(12)
+        
+        return (annualized_return - risk_free_rate) / annualized_downside_dev if annualized_downside_dev > 0 else 0
     
     def plot_simulation_paths(self, num_paths: int = 50, figsize: Tuple[int, int] = (12, 8)):
         """

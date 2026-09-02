@@ -59,7 +59,7 @@ CORRELATION_MATRIX = np.array([
 # ============================================================================
 
 # Portfolio starting parameters
-INITIAL_VALUE = 500_000          # Initial portfolio value ($)
+INITIAL_VALUE = 350_000          # Initial portfolio value ($)
 ANNUAL_WITHDRAWAL = 12_000       # Annual withdrawal amount ($)
 
 # Time horizon
@@ -67,7 +67,7 @@ YEARS = 10                       # Number of years to simulate
 HISTORICAL_PERIODS = 120         # Number of months of historical data to generate
 
 # Monte Carlo settings
-ITERATIONS = 2000                   # Number of Monte Carlo simulations per allocation (reduced for speed)
+ITERATIONS = 10000                   # Number of Monte Carlo simulations per allocation (reduced for speed)
 WINDOW_SIZE = 24                 # Rolling window size in months for covariance calculation
 NUM_PROCESSES = max(1, mp.cpu_count() - 1)  # Use all CPU cores except one
 
@@ -77,11 +77,11 @@ CAPITAL_GAINS_TAX_RATE = 0.20    # Tax rate on capital gains
 
 # Allocation constraints
 # Order: Emerging Markets, Japan, Intl Developed, Bonds, Gold, US Equities
-MIN_EMERGING_MARKETS = 0.40      # Minimum 40% in Emerging Markets
-MAX_JAPAN = 0.25                 # Maximum 25% in Japan
-MAX_INTL_DEVELOPED = 0.25        # Maximum 25% in International Developed
-MAX_BONDS = 0.25                 # Maximum 25% in Bonds
-MAX_GOLD = 0.25                  # Maximum 25% in Gold
+MIN_EMERGING_MARKETS = 0.0      # Minimum 40% in Emerging Markets
+MAX_JAPAN = 0.40                 # Maximum 25% in Japan
+MAX_INTL_DEVELOPED = 0.40        # Maximum 25% in International Developed
+MAX_BONDS = 0.4                 # Maximum 25% in Bonds
+MAX_GOLD = 1                  # Maximum 25% in Gold
 # US Equities has no constraint (free variable)
 
 # Allocation step size
@@ -94,8 +94,19 @@ REBALANCE_THRESHOLD = 0.05       # Rebalance if any asset drifts ±5% from targe
 
 # Output settings
 TOP_N_STRATEGIES = 50            # Number of top strategies to save
-TARGET_FINAL_VALUE = 1_500_000   # Success threshold for 3x metric ($)
+TARGET_FINAL_VALUE = 1_350_000   # Success threshold for 3x metric ($)
 
+# ============================================================================
+# SPECIFIC ALLOCATIONS MODE
+# ============================================================================
+# Set to True to run simulations for specific allocations only (skips iteration)
+RUN_SPECIFIC_ALLOCATIONS = True
+
+# Define your specific allocations here (must sum to 1.0)
+# Order: [Emerging_Markets, Japan, Intl_Developed, Bonds, Gold, US_Equities]
+SPECIFIC_ALLOCATIONS = [
+    [0.53623, 0.00, 0.00, 0.00, 0.00, 0.46377],  # Example: 35% EM, 5% JP, 5% INTL, 5% Bonds, 0% Gold, 50% US
+]
 
 def load_historical_returns(filepath):
     """
@@ -357,10 +368,161 @@ def run_simulation_for_allocation(weights,
     }
 
 
+def run_specific_allocations_simulation():
+    """
+    Run simulations for specific allocations defined in SPECIFIC_ALLOCATIONS.
+    Saves results to specificSIM.csv
+    """
+    print("="*70)
+    print("SPECIFIC ALLOCATIONS SIMULATION")
+    print("="*70)
+    print("\nCONFIGURATION:")
+    print(f"  Data Source: {'Real Historical Data' if USE_REAL_DATA else 'Synthetic Data'}")
+    if USE_REAL_DATA:
+        print(f"  Data File: {HISTORICAL_DATA_FILE}")
+    print(f"  Assets: {', '.join(ASSET_NAMES)}")
+    print(f"  Initial Value: ${INITIAL_VALUE:,}")
+    print(f"  Annual Withdrawal: ${ANNUAL_WITHDRAWAL:,}")
+    print(f"  Time Horizon: {YEARS} years")
+    print(f"  Monte Carlo Iterations: {ITERATIONS:,}")
+    print(f"  Rolling Window Size: {WINDOW_SIZE} months")
+    print(f"  Rebalancing: {'Enabled' if REBALANCE_ENABLED else 'Disabled'}")
+    if REBALANCE_ENABLED:
+        print(f"    Check every {REBALANCE_CHECK_FREQUENCY} months, rebalance if drift >{REBALANCE_THRESHOLD*100:.0f}%")
+    print(f"\n  Number of specific allocations: {len(SPECIFIC_ALLOCATIONS)}")
+    print("="*70)
+    
+    # Validate allocations
+    print("\nValidating allocations...")
+    valid_allocations = []
+    for i, alloc in enumerate(SPECIFIC_ALLOCATIONS):
+        if len(alloc) != 6:
+            print(f"  ❌ Allocation {i+1}: Wrong number of assets (got {len(alloc)}, expected 6)")
+            continue
+        total = sum(alloc)
+        if abs(total - 1.0) > 0.001:
+            print(f"  ❌ Allocation {i+1}: Weights sum to {total:.4f}, not 1.0")
+            continue
+        if any(w < 0 for w in alloc):
+            print(f"  ❌ Allocation {i+1}: Contains negative weights")
+            continue
+        valid_allocations.append(tuple(alloc))
+        print(f"  ✓ Allocation {i+1}: EM={alloc[0]:.0%}, JP={alloc[1]:.0%}, INTL={alloc[2]:.0%}, "
+              f"Bonds={alloc[3]:.0%}, Gold={alloc[4]:.0%}, US={alloc[5]:.0%}")
+    
+    if not valid_allocations:
+        print("\n❌ No valid allocations to simulate!")
+        return None
+    
+    print(f"\n✓ {len(valid_allocations)} valid allocations to simulate")
+    
+    # Load or generate historical returns DataFrame
+    if USE_REAL_DATA:
+        returns_df = load_historical_returns(HISTORICAL_DATA_FILE)
+        if list(returns_df.columns) != ASSET_NAMES:
+            print(f"⚠ WARNING: CSV columns ({list(returns_df.columns)}) don't match ASSET_NAMES ({ASSET_NAMES})")
+    else:
+        print("\nGenerating synthetic historical returns from model assumptions...")
+        returns_df = create_returns_df_from_parameters(
+            asset_names=ASSET_NAMES,
+            expected_returns=EXPECTED_RETURNS,
+            volatilities=VOLATILITIES,
+            correlation_matrix=CORRELATION_MATRIX,
+            n_periods=HISTORICAL_PERIODS
+        )
+        print(f"✓ Created {len(returns_df)} months of synthetic returns data")
+    
+    # Prepare arguments for parallel processing
+    args_list = [
+        (combo, INITIAL_VALUE, ANNUAL_WITHDRAWAL, YEARS, ITERATIONS, WINDOW_SIZE,
+         REBALANCE_ENABLED, REBALANCE_CHECK_FREQUENCY, REBALANCE_THRESHOLD)
+        for combo in valid_allocations
+    ]
+    
+    # Run simulations
+    print(f"\nRunning simulations with {NUM_PROCESSES} parallel processes...")
+    print(f"(Using {ITERATIONS:,} iterations per allocation)")
+    start_time = time.time()
+    
+    # Prepare data for workers
+    returns_values = returns_df.values
+    returns_index = returns_df.index.astype(str).tolist()
+    returns_columns = returns_df.columns.tolist()
+    
+    with mp.Pool(
+        processes=NUM_PROCESSES,
+        initializer=_init_worker,
+        initargs=(returns_values, returns_index, returns_columns)
+    ) as pool:
+        results = []
+        for result in tqdm(
+            pool.imap(_worker_simulate, args_list),
+            total=len(args_list),
+            desc="Progress",
+            unit="alloc",
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]'
+        ):
+            if result is not None:
+                results.append(result)
+    
+    elapsed_time = time.time() - start_time
+    print(f"\n✓ Simulation completed in {elapsed_time:.1f} seconds")
+    
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+    
+    # Reorder columns
+    column_order = [
+        'Emerging_Markets_Weight',
+        'Japan_Weight',
+        'Intl_Developed_Weight',
+        'Bonds_Weight',
+        'Gold_Weight',
+        'US_Equities_Weight',
+        'Expected_Annual_Return',
+        'Volatility',
+        'Sharpe_Ratio',
+        'Sortino_Ratio',
+        'Mean_Terminal_Wealth',
+        'Median_Terminal_Wealth',
+        '5th_Percentile_Outcome',
+        'Probability_of_Success_Pct',
+        'Success_3x_Pct',
+        'Mean_Max_Drawdown',
+        'Worst_Max_Drawdown'
+    ]
+    results_df = results_df[[col for col in column_order if col in results_df.columns]]
+    
+    # Save to CSV
+    output_file = 'specificSIM.csv'
+    results_df.to_csv(output_file, index=False)
+    print(f"\n✓ Results saved to {output_file}")
+    
+    # Print summary
+    print("\n" + "="*70)
+    print("RESULTS SUMMARY")
+    print("="*70)
+    for idx, row in results_df.iterrows():
+        print(f"\nAllocation {idx+1}:")
+        print(f"  Weights: EM={row['Emerging_Markets_Weight']:.0%}, JP={row['Japan_Weight']:.0%}, "
+              f"INTL={row['Intl_Developed_Weight']:.0%}, Bonds={row['Bonds_Weight']:.0%}, "
+              f"Gold={row['Gold_Weight']:.0%}, US={row['US_Equities_Weight']:.0%}")
+        print(f"  Mean Terminal Wealth: ${row['Mean_Terminal_Wealth']:,.0f}")
+        print(f"  Success Rate (3x): {row['Success_3x_Pct']:.2f}%")
+        print(f"  Sharpe Ratio: {row['Sharpe_Ratio']:.3f}")
+        print(f"  Mean Max Drawdown: {row['Mean_Max_Drawdown']:.2f}%")
+    
+    return results_df
+
+
 def main():
     """
     Main optimization function
     """
+    # Check if running specific allocations mode
+    if RUN_SPECIFIC_ALLOCATIONS:
+        return run_specific_allocations_simulation()
+    
     print("="*70)
     print("PORTFOLIO ALLOCATION OPTIMIZER")
     print("="*70)
@@ -503,8 +665,8 @@ def main():
     # Reorder columns (only include columns that exist)
     results_df = results_df[[col for col in column_order if col in results_df.columns]]
     
-    # Save to top_N_strategies.csv (overwrite existing file with top N only)
-    output_file = f'top_{TOP_N_STRATEGIES}_strategies.csv'
+    # Save to CSV (change filename for different constraint runs)
+    output_file = f'top_{TOP_N_STRATEGIES}_LOOSEconstraints.csv'
     results_df.to_csv(output_file, index=False)
     print(f"\n✓ Results saved to {output_file} (top {TOP_N_STRATEGIES} strategies by 3x success rate)")
     print(f"Total combinations tested: {len(results)}")
