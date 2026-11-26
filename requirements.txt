@@ -2,3 +2,5 @@ numpy>=1.21.0
 pandas>=1.3.0
 matplotlib>=3.4.0
 tqdm>=4.62.0
+# Optional: nicer heatmaps in validate_correlation_matrix.py
+seaborn>=0.11.0

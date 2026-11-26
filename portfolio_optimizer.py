@@ -214,7 +214,7 @@ def create_returns_df_from_parameters(asset_names, expected_returns, volatilitie
     returns = np.random.multivariate_normal(monthly_means, covariance_matrix, size=n_periods)
     
     # Create date index (monthly)
-    dates = pd.date_range(start='2014-01-01', periods=n_periods, freq='M')
+    dates = pd.date_range(start='2014-01-01', periods=n_periods, freq='MS')
     
     # Create DataFrame
     returns_df = pd.DataFrame(returns, index=dates, columns=asset_names)

@@ -130,7 +130,7 @@ def analyze_optimal_strategies(csv_file='portfolio_optimization_results.csv'):
     
     # Save top 50 strategies
     top_50 = df.nlargest(50, 'Success_3x_Pct')
-    top_50_file = 'top_50_strategies.csv'
+    top_50_file = 'analysis_top_50.csv'
     top_50.to_csv(top_50_file, index=False)
     print(f"✓ Saved top 50 strategies to {top_50_file}")
     
@@ -164,6 +164,6 @@ if __name__ == "__main__":
     print("ANALYSIS COMPLETE")
     print("="*70)
     print("\nFiles created:")
-    print("- top_50_strategies.csv: Best 50 allocation combinations")
+    print("- analysis_top_50.csv: Best 50 allocation combinations")
     print("- strategy_summary.csv: Summary of recommended strategies")
 

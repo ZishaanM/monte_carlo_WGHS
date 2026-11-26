@@ -2,3 +2,12 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.venv/
+venv/
+
+# Generated outputs
+historical_asset_returns_TEMPLATE.csv
+analysis_top_50.csv
+strategy_summary.csv
+custom_allocation_success.csv
+correlation_matrix_comparison.png
